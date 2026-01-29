@@ -177,3 +177,4 @@ env/
 .cursor/
 data/
 notebooks/
+.gitignore
