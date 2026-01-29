@@ -177,4 +177,4 @@ env/
 .cursor/
 data/
 notebooks/
-.poetry.lock
+poetry.lock
