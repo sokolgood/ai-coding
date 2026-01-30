@@ -4,9 +4,11 @@ from rich.console import Console
 from rich.panel import Panel
 
 from src.prompts.registry import PromptsRegistry
+from src.services.llm.agents.sgr.reviewer import SGRReviewerAgent
 from src.services.llm.engine import LLM
 from src.services.llm.tools import GrepSearchTool, ListDirectoryTool, ReadFileTool
 from src.services.llm.tools.base import Tool
+from src.types.context import ReviewerContext
 from src.types.main import Message, ToolResult
 from src.types.review import ReviewReport
 
@@ -18,6 +20,7 @@ class ReviewerAgent:
         self.llm = llm
         self.prompts_registry = prompts_registry
         self.repo_path = repo_path
+        self.sgr = SGRReviewerAgent(llm, prompts_registry)
 
         self.tools: dict[str, Tool] = {
             "list_directory": ListDirectoryTool(base_path=repo_path),
@@ -25,8 +28,8 @@ class ReviewerAgent:
             "grep_search": GrepSearchTool(base_path=repo_path),
         }
 
-    async def run(self, pr_diff: str, issue_description: str, ci_results: str = "", max_iterations: int = 5) -> str:
-        diff_preview = pr_diff[:200] + "..." if len(pr_diff) > 200 else pr_diff
+    async def run(self, ctx: ReviewerContext) -> str:
+        diff_preview = ctx.pr_diff[:200] + "..." if len(ctx.pr_diff) > 200 else ctx.pr_diff
         console.print(
             Panel(
                 f"[bold]🔍 Reviewer Agent started[/bold]\nDiff preview: {diff_preview}",
@@ -35,15 +38,25 @@ class ReviewerAgent:
             )
         )
 
+        available_tools = list(self.tools.values())
+
+        console.print("[bold cyan]📋 Generating review plan...[/bold cyan]")
+        plan = await self.sgr.run(ctx, available_tools)
+
+        console.print(Panel(f"[bold]Plan: {plan.objective}[/bold]\nSteps: {len(plan.steps)}", border_style="cyan"))
+        for step in plan.steps:
+            tools_str = ", ".join([t.name for t in step.suggested_tools]) if step.suggested_tools else "none"
+            console.print(f"  {step.id}: {step.goal} (tools: {tools_str})")
+
+        repo_context_str = ctx.repo.to_string()
         system_prompt = self.prompts_registry.reviewer.system.render(
-            issue_description=issue_description,
-            pr_diff=pr_diff,
-            ci_results=ci_results,
+            repo_context=repo_context_str,
         )
         user_prompt = self.prompts_registry.reviewer.user.render(
-            issue_description=issue_description,
-            pr_diff=pr_diff,
-            ci_results=ci_results,
+            issue_description=ctx.issue_body,
+            pr_diff=ctx.pr_diff,
+            ci_results=ctx.ci_summary,
+            sgr_plan_json=plan.model_dump_json(indent=2),
         )
 
         messages: list[Message] = [
@@ -51,36 +64,23 @@ class ReviewerAgent:
             Message(role="user", content=user_prompt),
         ]
 
-        available_tools = list(self.tools.values())
+        console.print("[bold yellow]🔧 Executing review plan...[/bold yellow]")
 
-        for iteration in range(max_iterations):
-            console.print(f"[dim]Iteration {iteration + 1}/{max_iterations}[/dim]")
+        tool_iterations = 0
+        max_tool_iterations = 10
 
-            use_structured_output = iteration == max_iterations - 1
-
+        while tool_iterations < max_tool_iterations:
             completion = await self.llm.invoke(
                 messages=messages,
                 model="gpt-4o-mini",
-                tools=available_tools if not use_structured_output else None,
-                response_format=ReviewReport if use_structured_output else None,
+                tools=available_tools,
             )
 
             message = completion.choices[0].message
             assistant_content = message.content or ""
 
-            if use_structured_output and message.content:
-                try:
-                    import json
-
-                    review_data = json.loads(message.content)
-                    review_report = ReviewReport(**review_data)
-                    msg = "[bold green]✓ Review completed with structured output[/bold green]"
-                    console.print(Panel(msg, border_style="green"))
-                    return review_report.model_dump_json(indent=2)
-                except Exception as e:
-                    console.print(f"[yellow]Failed to parse structured output: {e}, falling back to text[/yellow]")
-
             if message.tool_calls:
+                tool_iterations += 1
                 console.print(f"[yellow]🔧 Using {len(message.tool_calls)} tool(s)[/yellow]")
                 tool_calls_serialized = self._serialize_tool_calls(message.tool_calls)
                 messages.append(Message(role="assistant", content=assistant_content, tool_calls=tool_calls_serialized))
@@ -100,12 +100,7 @@ class ReviewerAgent:
                         tool = self.tools[tool_name]
                         tool_result = await tool.run(**tool_args)
                         if tool_result.success:
-                            result_preview = (
-                                (tool_result.content or "")[:150] + "..."
-                                if tool_result.content and len(tool_result.content) > 150
-                                else tool_result.content or ""
-                            )
-                            console.print(f"[green]✓ {tool_name} succeeded[/green] [dim]{result_preview}[/dim]")
+                            console.print(f"[green]✓ {tool_name} succeeded[/green]")
                         else:
                             console.print(f"[red]✗ {tool_name} failed: {tool_result.error}[/red]")
 
@@ -119,14 +114,37 @@ class ReviewerAgent:
                     )
             else:
                 messages.append(Message(role="assistant", content=assistant_content))
-                if not use_structured_output:
-                    console.print(Panel("[bold green]✓ Review completed[/bold green]", border_style="green"))
-                    return assistant_content
+                break
 
-        console.print(Panel("[bold red]✗ Max iterations reached[/bold red]", border_style="red"))
-        fail_summary = "Max iterations reached. Reviewer did not complete the review."
-        fail_json = f'{{"verdict": "FAIL", "summary": "{fail_summary}", "changes": []}}'
-        return fail_json
+        console.print("[bold magenta]📊 Generating final review report...[/bold magenta]")
+
+        final_completion = await self.llm.invoke(
+            messages=messages,
+            model="gpt-4o-mini",
+            tools=None,
+            response_format=ReviewReport,
+        )
+
+        message = final_completion.choices[0].message
+
+        if message.refusal:
+            console.print(f"[yellow]Model refused: {message.refusal}[/yellow]")
+            return ReviewReport(
+                verdict="FAIL",
+                summary=f"Model refused to provide review: {message.refusal}",
+                changes=[],
+            ).model_dump_json(indent=2)
+
+        if message.parsed:
+            console.print(Panel("[bold green]✓ Review completed[/bold green]", border_style="green"))
+            return message.parsed.model_dump_json(indent=2)
+
+        console.print("[yellow]Failed to get structured review, returning text[/yellow]")
+        return ReviewReport(
+            verdict="FAIL",
+            summary="Failed to get parsed review report",
+            changes=[],
+        ).model_dump_json(indent=2)
 
     def _serialize_tool_calls(self, tool_calls: list[Any]) -> list[dict]:
         result = []

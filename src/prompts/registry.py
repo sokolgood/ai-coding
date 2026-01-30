@@ -13,6 +13,8 @@ class PromptsRegistry:
         self.path = Path(path)
         self.prompts = self._load_prompts()
 
+        self.sgr_coder = self._build_prompt_set("sgr_coder")
+        self.sgr_reviewer = self._build_prompt_set("sgr_reviewer")
         self.coder = self._build_prompt_set("coder")
         self.reviewer = self._build_prompt_set("reviewer")
         self.fixer = self._build_prompt_set("fixer")

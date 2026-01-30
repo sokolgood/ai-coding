@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 
 from github import PullRequest
 from rich.console import Console
@@ -8,7 +9,9 @@ from src.config import Settings, get_settings
 from src.services.git.github import GitHubService
 from src.services.llm.agents.reviewer import ReviewerAgent
 from src.services.llm.factory import create_llm, create_prompts_registry
+from src.services.repo.context_builder import RepoContextBuilder
 from src.types import IterationState
+from src.types.context import ReviewerContext
 from src.types.review import ReviewReport
 
 console = Console()
@@ -72,7 +75,19 @@ class ReviewWorker:
         ci_summary = self.github_service.get_ci_summary(pr)
         ci_results = f"CI Conclusion: {ci_summary.conclusion}\n{ci_summary.details}" if ci_summary.conclusion else ""
 
-        review_result = await agent.run(pr_diff, issue_description, ci_results)
+        console.print("[bold]Building repository context...[/bold]")
+        repo_context = RepoContextBuilder.build(self.settings.repo_path)
+
+        ctx = ReviewerContext(
+            trace_id=str(uuid.uuid4()),
+            repo=repo_context,
+            pr_number=pr.number,
+            issue_body=issue_description,
+            pr_diff=pr_diff,
+            ci_summary=ci_results,
+        )
+
+        review_result = await agent.run(ctx)
         return review_result
 
     def _format_review_comment(self, review_report: ReviewReport, json_data: str) -> str:

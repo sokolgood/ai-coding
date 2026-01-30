@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from pathlib import Path
 
 from github import Issue
@@ -9,7 +10,9 @@ from src.services.git.github import GitHubService
 from src.services.git.ops import GitOps
 from src.services.llm.agents.coder import CoderAgent
 from src.services.llm.factory import create_llm, create_prompts_registry
+from src.services.repo.context_builder import RepoContextBuilder
 from src.types import IterationState
+from src.types.context import CoderContext
 
 console = Console()
 
@@ -88,11 +91,21 @@ class CodeWorker:
     async def _run_ai_agent(self, issue: Issue, iteration: int) -> None:
         llm = create_llm(self.settings.llm_api_key, self.settings.llm_base_url)
 
+        console.print("[bold]Building repository context...[/bold]")
+        repo_context = RepoContextBuilder.build(self.settings.repo_path)
+
+        ctx = CoderContext(
+            trace_id=str(uuid.uuid4()),
+            repo=repo_context,
+            issue_number=issue.number,
+            issue_title=issue.title,
+            issue_body=issue.body or f"Issue #{issue.number}",
+        )
+
         prompts_registry = create_prompts_registry()
         agent = CoderAgent(llm, prompts_registry, self.settings.repo_path)
 
-        issue_description = issue.body or f"Issue #{issue.number}"
-        result = await agent.run(issue_description)
+        result = await agent.run(ctx)
         console.print(f"[green]AI Agent completed: {result[:200]}...[/green]")
 
         console.print("[bold]Checking what files were modified...[/bold]")
