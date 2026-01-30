@@ -1,15 +1,17 @@
-from src.services.llm.tools.apply_patch import ApplyPatchTool
 from src.services.llm.tools.base import Tool
+from src.services.llm.tools.edit_file import EditFileTool
 from src.services.llm.tools.grep_search import GrepSearchTool
 from src.services.llm.tools.list_directory import ListDirectoryTool
 from src.services.llm.tools.read_file import ReadFileTool
+from src.services.llm.tools.run_command import RunCommandTool
 from src.services.llm.tools.write_file import WriteFileTool
 
 __all__ = [
     "Tool",
     "ListDirectoryTool",
     "ReadFileTool",
+    "EditFileTool",
     "WriteFileTool",
     "GrepSearchTool",
-    "ApplyPatchTool",
+    "RunCommandTool",
 ]

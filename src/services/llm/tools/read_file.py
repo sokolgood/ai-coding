@@ -7,9 +7,9 @@ from src.types.main import ToolResult
 
 class ReadFileTool(Tool):
     name = "read_file"
-    description = "Read contents of a file. Returns file content as text."
+    description = "Read the contents of a file from the repository"
 
-    def __init__(self, base_path: str | None = None):
+    def __init__(self, base_path: str | None = None) -> None:
         self.base_path = Path(base_path) if base_path else Path.cwd()
 
     def json(self) -> dict[str, Any]:
@@ -23,7 +23,7 @@ class ReadFileTool(Tool):
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file to read. Can be relative or absolute.",
+                            "description": "The path of the file to read, relative to the repository root",
                         },
                     },
                     "required": ["path"],

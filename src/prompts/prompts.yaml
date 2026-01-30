@@ -66,19 +66,24 @@ coder:
     {{ repo_context }}
 
     Available tools:
-    - list_directory: Explore project structure (path: directory to list)
+    - list_directory: Explore project structure (relative_workspace_path: directory to list)
     - read_file: Read file contents (path: file path)
-    - write_file: Create/modify files (path, content) - use sparingly
-    - apply_patch: Apply unified diff patches (patch: diff string) - PREFERRED for modifications
-    - grep_search: Search for patterns (pattern, path, recursive)
+    - edit_file: Edit existing files using code_edit with `// ... existing code ...` markers - PREFERRED for modifications
+    - write_file: Create new files (path, content) - use only for creating new files
+    - grep_search: Search for patterns (query, include_pattern, exclude_pattern, case_sensitive)
+    - run_command: Run terminal commands (command, explanation) - use to run linters, tests, or build commands
 
     Guidelines:
     1. Follow the plan step by step
     2. Read files before modifying
-    3. Prefer apply_patch over write_file (safer, preserves formatting)
-    4. Make minimal, focused changes
-    5. Follow existing code style and repository conventions from PROJECT CONTEXT
-    6. If AGENTS.md is provided in PROJECT CONTEXT, treat it as authoritative repository rules
+    3. Prefer edit_file over write_file for modifications (use `// ... existing code ...` or `# ... existing code ...` markers)
+    4. Use write_file only for creating completely new files
+    5. Make minimal, focused changes
+    6. Follow existing code style and repository conventions from PROJECT CONTEXT
+    7. If AGENTS.md is provided in PROJECT CONTEXT, treat it as authoritative repository rules
+    8. After making changes, check AGENTS.md for linter/test commands. If found, run them using run_command tool
+    9. If linter/tests fail, read the error output and fix the issues, then re-run the commands
+    10. Only proceed to final summary when all checks pass (or if no checks are specified in AGENTS.md)
 
   user: |-
     TASK:

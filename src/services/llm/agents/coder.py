@@ -7,10 +7,11 @@ from src.prompts.registry import PromptsRegistry
 from src.services.llm.agents.sgr.coder import SGRCoderAgent
 from src.services.llm.engine import LLM
 from src.services.llm.tools import (
-    ApplyPatchTool,
+    EditFileTool,
     GrepSearchTool,
     ListDirectoryTool,
     ReadFileTool,
+    RunCommandTool,
     WriteFileTool,
 )
 from src.services.llm.tools.base import Tool
@@ -31,9 +32,10 @@ class CoderAgent:
         self.tools: dict[str, Tool] = {
             "list_directory": ListDirectoryTool(base_path=repo_path),
             "read_file": ReadFileTool(base_path=repo_path),
+            "edit_file": EditFileTool(base_path=repo_path),
             "write_file": WriteFileTool(base_path=repo_path),
-            "apply_patch": ApplyPatchTool(base_path=repo_path),
             "grep_search": GrepSearchTool(base_path=repo_path),
+            "run_command": RunCommandTool(base_path=repo_path),
         }
 
     async def run(self, ctx: CoderContext) -> str:
