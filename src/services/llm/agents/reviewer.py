@@ -8,6 +8,7 @@ from src.services.llm.engine import LLM
 from src.services.llm.tools import GrepSearchTool, ListDirectoryTool, ReadFileTool
 from src.services.llm.tools.base import Tool
 from src.types.main import Message, ToolResult
+from src.types.review import ReviewReport
 
 console = Console()
 
@@ -55,14 +56,29 @@ class ReviewerAgent:
         for iteration in range(max_iterations):
             console.print(f"[dim]Iteration {iteration + 1}/{max_iterations}[/dim]")
 
+            use_structured_output = iteration == max_iterations - 1
+
             completion = await self.llm.invoke(
                 messages=messages,
                 model="gpt-4o-mini",
-                tools=available_tools,
+                tools=available_tools if not use_structured_output else None,
+                response_format=ReviewReport if use_structured_output else None,
             )
 
             message = completion.choices[0].message
             assistant_content = message.content or ""
+
+            if use_structured_output and message.content:
+                try:
+                    import json
+
+                    review_data = json.loads(message.content)
+                    review_report = ReviewReport(**review_data)
+                    msg = "[bold green]✓ Review completed with structured output[/bold green]"
+                    console.print(Panel(msg, border_style="green"))
+                    return review_report.model_dump_json(indent=2)
+                except Exception as e:
+                    console.print(f"[yellow]Failed to parse structured output: {e}, falling back to text[/yellow]")
 
             if message.tool_calls:
                 console.print(f"[yellow]🔧 Using {len(message.tool_calls)} tool(s)[/yellow]")
@@ -73,7 +89,9 @@ class ReviewerAgent:
                     tool_name = tool_call.function.name
                     tool_args = self._parse_tool_args(tool_call.function.arguments)
 
-                    console.print(f"[cyan]→ {tool_name}[/cyan] {tool_args}")
+                    args_str = str(tool_args)
+                    args_preview = args_str[:50] + "..." if len(args_str) > 50 else args_str
+                    console.print(f"[cyan]→ {tool_name}[/cyan] {args_preview}")
 
                     if tool_name not in self.tools:
                         tool_result = ToolResult(success=False, error=f"Unknown tool: {tool_name}")
@@ -101,11 +119,14 @@ class ReviewerAgent:
                     )
             else:
                 messages.append(Message(role="assistant", content=assistant_content))
-                console.print(Panel("[bold green]✓ Review completed[/bold green]", border_style="green"))
-                return assistant_content
+                if not use_structured_output:
+                    console.print(Panel("[bold green]✓ Review completed[/bold green]", border_style="green"))
+                    return assistant_content
 
         console.print(Panel("[bold red]✗ Max iterations reached[/bold red]", border_style="red"))
-        return "Max iterations reached. Reviewer did not complete the review."
+        fail_summary = "Max iterations reached. Reviewer did not complete the review."
+        fail_json = f'{{"verdict": "FAIL", "summary": "{fail_summary}", "changes": []}}'
+        return fail_json
 
     def _serialize_tool_calls(self, tool_calls: list[Any]) -> list[dict]:
         result = []

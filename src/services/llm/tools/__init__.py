@@ -1,3 +1,4 @@
+from src.services.llm.tools.apply_patch import ApplyPatchTool
 from src.services.llm.tools.base import Tool
 from src.services.llm.tools.grep_search import GrepSearchTool
 from src.services.llm.tools.list_directory import ListDirectoryTool
@@ -10,4 +11,5 @@ __all__ = [
     "ReadFileTool",
     "WriteFileTool",
     "GrepSearchTool",
+    "ApplyPatchTool",
 ]

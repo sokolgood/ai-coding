@@ -6,6 +6,7 @@ from rich.panel import Panel
 from src.prompts.registry import PromptsRegistry
 from src.services.llm.engine import LLM
 from src.services.llm.tools import (
+    ApplyPatchTool,
     GrepSearchTool,
     ListDirectoryTool,
     ReadFileTool,
@@ -27,6 +28,7 @@ class CoderAgent:
             "list_directory": ListDirectoryTool(base_path=repo_path),
             "read_file": ReadFileTool(base_path=repo_path),
             "write_file": WriteFileTool(base_path=repo_path),
+            "apply_patch": ApplyPatchTool(base_path=repo_path),
             "grep_search": GrepSearchTool(base_path=repo_path),
         }
 

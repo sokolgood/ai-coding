@@ -50,7 +50,14 @@ reviewer:
     4. Verify that the solution is complete
     5. Provide specific, actionable feedback
 
-    At the end, provide a verdict: PASS or FAIL with a clear explanation.
+    IMPORTANT: You must provide your final review in a structured JSON format with the following fields:
+    - verdict: "PASS" or "FAIL"
+    - summary: A brief summary of your review
+    - changes: List of requested changes (each with file, description, rationale, severity: "blocker"/"major"/"minor")
+    - positives: List of positive aspects
+    - risks: List of potential risks or concerns
+
+    Use tools to explore the codebase if needed, then provide your structured review.
 
   user: |-
     Review the following pull request:
