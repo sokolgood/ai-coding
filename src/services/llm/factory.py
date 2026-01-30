@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from langfuse import Langfuse
 from openai import AsyncOpenAI
 
 from src.prompts.registry import PromptsRegistry
@@ -17,3 +18,9 @@ def create_prompts_registry(prompts_path: str | None = None) -> PromptsRegistry:
         prompts_path = str(base_path / "prompts" / "prompts.yaml")
 
     return PromptsRegistry(prompts_path)
+
+
+def init_langfuse(secret_key: str, public_key: str, base_url: str) -> Langfuse | None:
+    if not secret_key or not public_key:
+        return None
+    return Langfuse(secret_key=secret_key, public_key=public_key, host=base_url)

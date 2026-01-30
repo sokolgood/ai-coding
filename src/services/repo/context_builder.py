@@ -7,6 +7,7 @@ from src.types.context import RepoContext
 class RepoContextBuilder:
     MAX_FILE_SIZE: ClassVar[int] = 12 * 1024
     TRUNCATE_SIZE: ClassVar[int] = 4000
+    README_MAX_LINES: ClassVar[int] = 50  # Limit README to first N lines
 
     @classmethod
     def build(cls: type["RepoContextBuilder"], repo_path: str) -> RepoContext:
@@ -46,6 +47,17 @@ class RepoContextBuilder:
 
         try:
             content = file_path.read_text(encoding="utf-8")
+
+            # Special handling for README: limit to first N lines
+            if file_path.name == "README.md":
+                lines = content.splitlines()
+                if len(lines) > cls.README_MAX_LINES:
+                    limited_lines = lines[: cls.README_MAX_LINES]
+                    truncated_count = len(lines) - cls.README_MAX_LINES
+                    return "\n".join(limited_lines) + f"\n\n... [truncated {truncated_count} lines] ..."
+                return content
+
+            # For other files, use size-based truncation
             if len(content) > cls.MAX_FILE_SIZE:
                 first_part = content[: cls.TRUNCATE_SIZE]
                 last_part = content[-cls.TRUNCATE_SIZE :]

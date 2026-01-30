@@ -8,7 +8,7 @@ from rich.console import Console
 from src.config import Settings, get_settings
 from src.services.git.github import GitHubService
 from src.services.llm.agents.reviewer import ReviewerAgent
-from src.services.llm.factory import create_llm, create_prompts_registry
+from src.services.llm.factory import create_llm, create_prompts_registry, init_langfuse
 from src.services.repo.context_builder import RepoContextBuilder
 from src.types import IterationState
 from src.types.context import ReviewerContext
@@ -21,6 +21,12 @@ class ReviewWorker:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self.github_service = GitHubService(self.settings)
+        # Initialize Langfuse
+        init_langfuse(
+            self.settings.langfuse_secret_key,
+            self.settings.langfuse_public_key,
+            self.settings.langfuse_base_url,
+        )
 
     def run(self, pr_number: int) -> None:
         asyncio.run(self._run_async(pr_number))
@@ -67,7 +73,7 @@ class ReviewWorker:
         llm = create_llm(self.settings.llm_api_key, self.settings.llm_base_url)
 
         prompts_registry = create_prompts_registry()
-        agent = ReviewerAgent(llm, prompts_registry, self.settings.repo_path)
+        agent = ReviewerAgent(llm, prompts_registry, self.settings.repo_path, self.settings.llm_model_name)
 
         pr_diff = self.github_service.get_pr_diff(pr.number)
         issue_description = pr.body or f"PR #{pr.number}"

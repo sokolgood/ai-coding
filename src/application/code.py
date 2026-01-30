@@ -9,7 +9,7 @@ from src.config import Settings, get_settings
 from src.services.git.github import GitHubService
 from src.services.git.ops import GitOps
 from src.services.llm.agents.coder import CoderAgent
-from src.services.llm.factory import create_llm, create_prompts_registry
+from src.services.llm.factory import create_llm, create_prompts_registry, init_langfuse
 from src.services.repo.context_builder import RepoContextBuilder
 from src.types import IterationState
 from src.types.context import CoderContext
@@ -22,6 +22,12 @@ class CodeWorker:
         self.settings = settings or get_settings()
         self.github_service = GitHubService(self.settings)
         self.git_ops = GitOps(self.settings.repo_path)
+        # Initialize Langfuse
+        init_langfuse(
+            self.settings.langfuse_secret_key,
+            self.settings.langfuse_public_key,
+            self.settings.langfuse_base_url,
+        )
 
     def run(self, issue_number: int, base_branch: str = "main", max_iter: int = 5) -> None:
         asyncio.run(self._run_async(issue_number, base_branch, max_iter))
@@ -103,7 +109,7 @@ class CodeWorker:
         )
 
         prompts_registry = create_prompts_registry()
-        agent = CoderAgent(llm, prompts_registry, self.settings.repo_path)
+        agent = CoderAgent(llm, prompts_registry, self.settings.repo_path, self.settings.llm_model_name)
 
         result = await agent.run(ctx)
         console.print(f"[green]AI Agent completed: {result[:200]}...[/green]")

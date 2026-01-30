@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Any
 
+from langfuse.decorators import observe
+
 from src.services.llm.tools.base import Tool
 from src.types.main import ToolResult
 
@@ -34,6 +36,7 @@ class ListDirectoryTool(Tool):
             },
         }
 
+    @observe()
     async def run(self, path: str = ".") -> ToolResult:
         try:
             target_path = Path(path)

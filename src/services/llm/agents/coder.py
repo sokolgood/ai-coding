@@ -1,18 +1,20 @@
+import json
 from typing import Any
 
+from langfuse.decorators import observe
 from rich.console import Console
 from rich.panel import Panel
+from rich.syntax import Syntax
 
 from src.prompts.registry import PromptsRegistry
 from src.services.llm.agents.sgr.coder import SGRCoderAgent
 from src.services.llm.engine import LLM
 from src.services.llm.tools import (
-    EditFileTool,
+    CreateFileTool,
     GrepSearchTool,
     ListDirectoryTool,
     ReadFileTool,
-    RunCommandTool,
-    WriteFileTool,
+    UpdateFileTool,
 )
 from src.services.llm.tools.base import Tool
 from src.types.coder_result import CoderResult
@@ -23,21 +25,25 @@ console = Console()
 
 
 class CoderAgent:
-    def __init__(self, llm: LLM, prompts_registry: PromptsRegistry, repo_path: str = ".") -> None:
+    def __init__(
+        self, llm: LLM, prompts_registry: PromptsRegistry, repo_path: str = ".", model_name: str = "gpt-4o-mini"
+    ) -> None:
         self.llm = llm
         self.prompts_registry = prompts_registry
         self.repo_path = repo_path
-        self.sgr = SGRCoderAgent(llm, prompts_registry)
+        self.model_name = model_name
+        self.sgr = SGRCoderAgent(llm, prompts_registry, model_name)
 
         self.tools: dict[str, Tool] = {
             "list_directory": ListDirectoryTool(base_path=repo_path),
             "read_file": ReadFileTool(base_path=repo_path),
-            "edit_file": EditFileTool(base_path=repo_path),
-            "write_file": WriteFileTool(base_path=repo_path),
+            "update_file": UpdateFileTool(base_path=repo_path),
+            "create_file": CreateFileTool(base_path=repo_path),
             "grep_search": GrepSearchTool(base_path=repo_path),
-            "run_command": RunCommandTool(base_path=repo_path),
+            # NOTE: run_command tool is disabled - runtime checks (linting/tests) are handled by CI/CD
         }
 
+    @observe(name="CoderAgent")
     async def run(self, ctx: CoderContext) -> str:
         desc_preview = ctx.issue_body[:200] + "..." if len(ctx.issue_body) > 200 else ctx.issue_body
         console.print(Panel(f"[bold]🚀 Coder Agent started[/bold]\n{desc_preview}", title="Agent", border_style="blue"))
@@ -68,10 +74,13 @@ class CoderAgent:
 
         console.print("[bold yellow]🔧 Executing plan...[/bold yellow]")
 
-        while True:
+        max_tool_iterations = 20
+        tool_iterations = 0
+
+        while tool_iterations < max_tool_iterations:
             completion = await self.llm.invoke(
                 messages=messages,
-                model="gpt-4o-mini",
+                model=self.model_name,
                 tools=available_tools,
             )
 
@@ -79,7 +88,9 @@ class CoderAgent:
             assistant_content = message.content or ""
 
             if message.tool_calls:
-                console.print(f"[yellow]🔧 Using {len(message.tool_calls)} tool(s)[/yellow]")
+                tool_iterations += 1
+                iter_info = f"iteration {tool_iterations}/{max_tool_iterations}"
+                console.print(f"\n[yellow]🔧 Tool calls ({iter_info})[/yellow]")
                 tool_calls_serialized = self._serialize_tool_calls(message.tool_calls)
                 messages.append(Message(role="assistant", content=assistant_content, tool_calls=tool_calls_serialized))
 
@@ -87,19 +98,43 @@ class CoderAgent:
                     tool_name = tool_call.function.name
                     tool_args = self._parse_tool_args(tool_call.function.arguments)
 
-                    args_preview = str(tool_args)[:50] + "..." if len(str(tool_args)) > 50 else str(tool_args)
-                    console.print(f"[cyan]→ {tool_name}[/cyan] {args_preview}")
+                    # Format tool call with full parameters
+                    args_json = json.dumps(tool_args, indent=2, ensure_ascii=False)
+                    console.print(
+                        Panel(
+                            Syntax(args_json, "json", theme="monokai", line_numbers=False),
+                            title=f"[bold cyan]Tool: {tool_name}[/bold cyan]",
+                            border_style="cyan",
+                        )
+                    )
 
                     if tool_name not in self.tools:
                         tool_result = ToolResult(success=False, error=f"Unknown tool: {tool_name}")
-                        console.print(f"[red]✗ Unknown tool: {tool_name}[/red]")
+                        console.print(Panel(f"[red]✗ Unknown tool: {tool_name}[/red]", border_style="red"))
                     else:
                         tool = self.tools[tool_name]
                         tool_result = await tool.run(**tool_args)
+
                         if tool_result.success:
-                            console.print(f"[green]✓ {tool_name} succeeded[/green]")
+                            # Show result content (truncated if too long)
+                            result_preview = tool_result.content or "Success"
+                            if len(result_preview) > 500:
+                                result_preview = result_preview[:500] + "\n... [truncated]"
+                            console.print(
+                                Panel(
+                                    result_preview,
+                                    title=f"[bold green]✓ {tool_name} succeeded[/bold green]",
+                                    border_style="green",
+                                )
+                            )
                         else:
-                            console.print(f"[red]✗ {tool_name} failed: {tool_result.error}[/red]")
+                            console.print(
+                                Panel(
+                                    tool_result.error or "Unknown error",
+                                    title=f"[bold red]✗ {tool_name} failed[/bold red]",
+                                    border_style="red",
+                                )
+                            )
 
                     error_msg = f"Error: {tool_result.error}" if not tool_result.success else None
                     messages.append(
@@ -110,8 +145,30 @@ class CoderAgent:
                         )
                     )
             else:
+                # No more tool calls - show final response
+                if assistant_content:
+                    console.print(
+                        Panel(
+                            assistant_content,
+                            title="[bold]LLM Response[/bold]",
+                            border_style="blue",
+                        )
+                    )
                 messages.append(Message(role="assistant", content=assistant_content))
                 break
+
+        if tool_iterations >= max_tool_iterations:
+            max_iter_msg = f"Reached max tool iterations ({max_tool_iterations})"
+            console.print(f"[yellow]⚠️ {max_iter_msg}, proceeding to summary[/yellow]")
+            messages.append(
+                Message(
+                    role="user",
+                    content=(
+                        f"Maximum tool iterations ({max_tool_iterations}) reached. "
+                        "Please provide a summary of what was accomplished so far."
+                    ),
+                )
+            )
 
         console.print("[bold magenta]📊 Generating final summary...[/bold magenta]")
 
@@ -125,7 +182,7 @@ class CoderAgent:
 
         final_completion = await self.llm.invoke(
             messages=messages,
-            model="gpt-4o-mini",
+            model=self.model_name,
             tools=None,
             response_format=CoderResult,
         )
@@ -168,8 +225,6 @@ class CoderAgent:
         return result
 
     def _parse_tool_args(self, arguments: str) -> dict[str, Any]:
-        import json
-
         try:
             return json.loads(arguments)
         except json.JSONDecodeError:

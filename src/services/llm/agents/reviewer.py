@@ -1,7 +1,10 @@
+import json
 from typing import Any
 
+from langfuse.decorators import observe
 from rich.console import Console
 from rich.panel import Panel
+from rich.syntax import Syntax
 
 from src.prompts.registry import PromptsRegistry
 from src.services.llm.agents.sgr.reviewer import SGRReviewerAgent
@@ -16,11 +19,14 @@ console = Console()
 
 
 class ReviewerAgent:
-    def __init__(self, llm: LLM, prompts_registry: PromptsRegistry, repo_path: str = ".") -> None:
+    def __init__(
+        self, llm: LLM, prompts_registry: PromptsRegistry, repo_path: str = ".", model_name: str = "gpt-4o-mini"
+    ) -> None:
         self.llm = llm
         self.prompts_registry = prompts_registry
         self.repo_path = repo_path
-        self.sgr = SGRReviewerAgent(llm, prompts_registry)
+        self.model_name = model_name
+        self.sgr = SGRReviewerAgent(llm, prompts_registry, model_name)
 
         self.tools: dict[str, Tool] = {
             "list_directory": ListDirectoryTool(base_path=repo_path),
@@ -28,6 +34,7 @@ class ReviewerAgent:
             "grep_search": GrepSearchTool(base_path=repo_path),
         }
 
+    @observe(name="ReviewerAgent")
     async def run(self, ctx: ReviewerContext) -> str:
         diff_preview = ctx.pr_diff[:200] + "..." if len(ctx.pr_diff) > 200 else ctx.pr_diff
         console.print(
@@ -72,7 +79,7 @@ class ReviewerAgent:
         while tool_iterations < max_tool_iterations:
             completion = await self.llm.invoke(
                 messages=messages,
-                model="gpt-4o-mini",
+                model=self.model_name,
                 tools=available_tools,
             )
 
@@ -81,7 +88,8 @@ class ReviewerAgent:
 
             if message.tool_calls:
                 tool_iterations += 1
-                console.print(f"[yellow]🔧 Using {len(message.tool_calls)} tool(s)[/yellow]")
+                iter_info = f"iteration {tool_iterations}/{max_tool_iterations}"
+                console.print(f"\n[yellow]🔧 Tool calls ({iter_info})[/yellow]")
                 tool_calls_serialized = self._serialize_tool_calls(message.tool_calls)
                 messages.append(Message(role="assistant", content=assistant_content, tool_calls=tool_calls_serialized))
 
@@ -89,20 +97,43 @@ class ReviewerAgent:
                     tool_name = tool_call.function.name
                     tool_args = self._parse_tool_args(tool_call.function.arguments)
 
-                    args_str = str(tool_args)
-                    args_preview = args_str[:50] + "..." if len(args_str) > 50 else args_str
-                    console.print(f"[cyan]→ {tool_name}[/cyan] {args_preview}")
+                    # Format tool call with full parameters
+                    args_json = json.dumps(tool_args, indent=2, ensure_ascii=False)
+                    console.print(
+                        Panel(
+                            Syntax(args_json, "json", theme="monokai", line_numbers=False),
+                            title=f"[bold cyan]Tool: {tool_name}[/bold cyan]",
+                            border_style="cyan",
+                        )
+                    )
 
                     if tool_name not in self.tools:
                         tool_result = ToolResult(success=False, error=f"Unknown tool: {tool_name}")
-                        console.print(f"[red]✗ Unknown tool: {tool_name}[/red]")
+                        console.print(Panel(f"[red]✗ Unknown tool: {tool_name}[/red]", border_style="red"))
                     else:
                         tool = self.tools[tool_name]
                         tool_result = await tool.run(**tool_args)
+
                         if tool_result.success:
-                            console.print(f"[green]✓ {tool_name} succeeded[/green]")
+                            # Show result content (truncated if too long)
+                            result_preview = tool_result.content or "Success"
+                            if len(result_preview) > 500:
+                                result_preview = result_preview[:500] + "\n... [truncated]"
+                            console.print(
+                                Panel(
+                                    result_preview,
+                                    title=f"[bold green]✓ {tool_name} succeeded[/bold green]",
+                                    border_style="green",
+                                )
+                            )
                         else:
-                            console.print(f"[red]✗ {tool_name} failed: {tool_result.error}[/red]")
+                            console.print(
+                                Panel(
+                                    tool_result.error or "Unknown error",
+                                    title=f"[bold red]✗ {tool_name} failed[/bold red]",
+                                    border_style="red",
+                                )
+                            )
 
                     error_msg = f"Error: {tool_result.error}" if not tool_result.success else None
                     messages.append(
@@ -113,6 +144,15 @@ class ReviewerAgent:
                         )
                     )
             else:
+                # No more tool calls - show final response
+                if assistant_content:
+                    console.print(
+                        Panel(
+                            assistant_content,
+                            title="[bold]LLM Response[/bold]",
+                            border_style="blue",
+                        )
+                    )
                 messages.append(Message(role="assistant", content=assistant_content))
                 break
 
@@ -120,7 +160,7 @@ class ReviewerAgent:
 
         final_completion = await self.llm.invoke(
             messages=messages,
-            model="gpt-4o-mini",
+            model=self.model_name,
             tools=None,
             response_format=ReviewReport,
         )
@@ -136,8 +176,13 @@ class ReviewerAgent:
             ).model_dump_json(indent=2)
 
         if message.parsed:
+            result = message.parsed
             console.print(Panel("[bold green]✓ Review completed[/bold green]", border_style="green"))
-            return message.parsed.model_dump_json(indent=2)
+            console.print(f"[bold]Verdict:[/bold] {result.verdict}")
+            console.print(f"[bold]Summary:[/bold] {result.summary}")
+            if result.changes:
+                console.print(f"[bold]Requested changes:[/bold] {len(result.changes)}")
+            return result.model_dump_json(indent=2)
 
         console.print("[yellow]Failed to get structured review, returning text[/yellow]")
         return ReviewReport(
@@ -159,8 +204,6 @@ class ReviewerAgent:
         return result
 
     def _parse_tool_args(self, arguments: str) -> dict[str, Any]:
-        import json
-
         try:
             return json.loads(arguments)
         except json.JSONDecodeError:

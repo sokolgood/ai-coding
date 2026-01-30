@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Any
 
+from langfuse.decorators import observe
+
 from src.services.llm.tools.base import Tool
 from src.types.main import ToolResult
 
@@ -41,6 +43,7 @@ class GrepSearchTool(Tool):
             },
         }
 
+    @observe()
     async def run(self, pattern: str, path: str = ".", recursive: bool = True) -> ToolResult:
         try:
             target_path = Path(path)

@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from langfuse.decorators import observe
 from rich.console import Console
 
 from src.services.llm.tools.base import Tool
@@ -49,6 +50,7 @@ class RunCommandTool(Tool):
             },
         }
 
+    @observe()
     async def run(self, command: str, explanation: str) -> ToolResult:
         console.print(f"[cyan]→ Running command: {command}[/cyan]")
         console.print(f"[dim]Reason: {explanation}[/dim]")
@@ -77,11 +79,24 @@ class RunCommandTool(Tool):
                 )
             else:
                 error_output = stderr_text if stderr_text else stdout_text or "Command failed with no output"
+                if stdout_text and stderr_text:
+                    full_output = f"STDOUT:\n{stdout_text}\n\nSTDERR:\n{stderr_text}"
+                else:
+                    full_output = error_output
                 console.print(f"[red]✗ Command failed (exit code {process.returncode})[/red]")
                 console.print(f"[red]{error_output[:500]}[/red]")
+
+                error_message = (
+                    f"Command '{command}' failed with exit code {process.returncode}.\n\n"
+                    f"{full_output}\n\n"
+                    "Please check the error output above. Common issues:\n"
+                    "- Dependencies not installed (run 'make install' or 'poetry install' first)\n"
+                    "- Command not found (check if the tool is installed)\n"
+                    "- Syntax errors or configuration issues"
+                )
                 return ToolResult(
                     success=False,
-                    error=f"Command '{command}' failed with exit code {process.returncode}.\n{error_output}",
+                    error=error_message,
                 )
         except FileNotFoundError:
             error_msg = f"Command not found: {command.split()[0] if command.split() else command}"
