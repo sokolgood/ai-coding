@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     gh_token: str
     repo: str
     llm_api_key: str = ""
+    llm_base_url: str | None = None
     repo_path: str = "/repo"
 
     class Config:
@@ -27,5 +28,6 @@ def get_settings() -> Settings:
         gh_token=os.getenv("GH_TOKEN", ""),
         repo=os.getenv("REPO", ""),
         llm_api_key=os.getenv("LLM_API_KEY", ""),
+        llm_base_url=os.getenv("LLM_BASE_URL") or None,
         repo_path=os.getenv("REPO_PATH", "/repo"),
     )

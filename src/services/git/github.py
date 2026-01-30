@@ -45,7 +45,19 @@ class GitHubService:
 
     def get_pr_diff(self, pr_number: int) -> str:
         pr = self.get_pull_request(pr_number)
-        return pr.diff()
+        files = pr.get_files()
+
+        diff_parts = []
+        for file in files:
+            diff_parts.append(f"diff --git a/{file.filename} b/{file.filename}")
+            diff_parts.append(f"--- a/{file.filename}")
+            diff_parts.append(f"+++ b/{file.filename}")
+            if file.patch:
+                diff_parts.append(file.patch)
+            else:
+                diff_parts.append("Binary file or no changes")
+
+        return "\n".join(diff_parts)
 
     def get_pr_files(self, pr_number: int) -> list[str]:
         pr = self.get_pull_request(pr_number)
