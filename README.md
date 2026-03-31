@@ -2,6 +2,39 @@
 
 Автоматизированная система для разработки кода на основе GitHub Issues с использованием LLM. Система включает три основных агента: **Code Agent** (реализация задач), **Review Agent** (код-ревью) и **Fix Agent** (исправление по замечаниям).
 
+## Демо (с ссылками на тестовый репо github actions и PR):
+- [Тестовый репо](https://github.com/sokolgood/duga-backend) - бэкенд ios приложения для построения персональных маршрутов для прогулок и поиска новых мест на основе интересов пользователей
+
+- [Созданный Issue](https://github.com/sokolgood/duga-backend/issues/30) -> триггер в [github workflow](https://github.com/sokolgood/duga-backend/blob/main/.github/workflows/issue_to_pr.yaml)
+- [Github Action: Issue to PR](https://github.com/sokolgood/duga-backend/actions/runs/21529405653/job/62041286415):
+    * внутри docker pull образа ai-coding (~100mb) из ghcr.io, запуск контейнера и внутри cli с запуском code ->
+    * [cli](https://github.com/sokolgood/ai-coding/blob/main/src/cli.py) дергает [CodeWorker](https://github.com/sokolgood/ai-coding/blob/main/src/application/code.py) - оркестратор из application слоя (имеет доступ к бизнес-логике агентов, гит и гитхаба) ->
+    * собирается [RepoContext и CoderContext](https://github.com/sokolgood/ai-coding/blob/main/src/types/context.py) для агента ->
+    * [CoderAgent](https://github.com/sokolgood/ai-coding/blob/main/src/services/llm/agents/coder.py):
+        1. [SGRCoderAgent](https://github.com/sokolgood/ai-coding/blob/main/src/services/llm/agents/sgr/coder.py) - анализирует задачу, строит план и разбивает его на шаги - [SGRPlan](https://github.com/sokolgood/ai-coding/blob/main/src/types/plan.py);
+        2. Дальше [tools](https://github.com/sokolgood/ai-coding/tree/main/src/services/llm/tools) calling, чтобы LLM набрала достаточно контекста что где лежит, что ей нужно добавить и непосредственно сама работа с кодом через tools. Выходим из цикла вызовов tools, когда LLM перестала генерить новые вызов, либо в случае бесконечного цикла, то выходим после 20 вызовов тулов
+        3. final completion с [CoderResult](https://github.com/sokolgood/ai-coding/blob/main/src/types/coder_result.py) с пометкой о success, кратким summary и измененными файлами
+
+    * результат возвращается в CodeWorker -> commit -> push -> PR
+* [Автоматически созданный Pull Request](https://github.com/sokolgood/duga-backend/pull/31) -> триггер [github workflow для agent review](https://github.com/sokolgood/duga-backend/blob/main/.github/workflows/pr_ci_and_review.yaml)
+* [Github Action: Review PR](https://github.com/sokolgood/duga-backend/actions/runs/21529430018/job/62041380661):
+    * (аналогично) docker pull, run, cli, review -> [ReviewWorker](https://github.com/sokolgood/ai-coding/blob/main/src/application/review.py) -> RepoContext и ReviewerContext ->
+    * [ReviewerAgent](https://github.com/sokolgood/ai-coding/blob/main/src/services/llm/agents/reviewer.py):
+        1. (аналогично) [SGRReviewerAgent](https://github.com/sokolgood/ai-coding/blob/main/src/services/llm/agents/sgr/reviewer.py) -> SGRPlan
+        2. (аналогично) такая же логика tools calling, разве что количество тулов меньше (нет редактирования и тд)
+        3. final completion с [ReviewReport](https://github.com/sokolgood/ai-coding/blob/main/src/types/review.py) с пометкой о summary, changes, verdict и тд
+    * в случае ReviewReport.verdict = "PASS": проставляется тэг `agent:approved` в PR -> можно мерджить (мердж ручной после проверки глазами эксперта)
+    * в случае ReviewReport.verdict = "FAIL": проставляется тэг `agent:fix` в PR -> триггерится [github worflow для fix](https://github.com/sokolgood/duga-backend/blob/main/.github/workflows/pr_fix_on_label.yaml)
+
+* [Github Action: fix PR](https://github.com/sokolgood/duga-backend/blob/main/.github/workflows/pr_fix_on_label.yaml):
+    * (аналогично) docker pull, run, cli, fix -> [FixWorker](https://github.com/sokolgood/ai-coding/blob/main/src/application/fix.py) -> RepoContext и CoderContext (+ Reviewer Feedback с прошлого шага) ->
+    * CoderAgent (логику см. выше) -> CodeResult
+    * результат возвращается в CodeWorker -> commit -> push
+    * Так же через [IterationState](https://github.com/sokolgood/ai-coding/blob/main/src/types/__init__.py) прокидывается инфа в скрытом HTML-комментарии в тело PR (`<!-- agent:issue=42 iter=2 max=5 -->`
+    * Например, max=5 - это ограничение циклов Coder-Reviewer на 5 итераций. В случае зацикливание больше 5ти итераций не выполнится.
+
+* Дальше заново запускается review и тд...
+
 ## 🚀 Быстрый старт
 
 ### Запуск через Docker
